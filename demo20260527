@@ -1,0 +1,164 @@
+#include <windows.h>
+#include <tchar.h>
+#define ID_SINGLE  1001
+#define ID_DOUBLE 1002
+#define ID_MUTIPLE 1003
+#define ID_HELP_ABOUT 1004
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case ID_SINGLE:
+            break;
+        case  ID_DOUBLE:
+            break;
+        case ID_MUTIPLE:
+            break;
+        case ID_HELP_ABOUT:
+            MessageBox(hwnd, _T("Group 17."), _T("About"), MB_OK | MB_ICONINFORMATION);
+            break;
+        }
+        break;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        SetGraphicsMode(hdc, GM_ADVANCED);
+
+        // 大字型（原本的）
+        HFONT hFont = CreateFont(
+            32, 0, 0, 0, FW_BOLD,
+            FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_SWISS,
+            L"Segoe UI Symbol"
+        );
+        // 小字型（用於數字下方的花色符號）
+        HFONT hSmall = CreateFont(
+            16, 0, 0, 0, FW_BOLD,
+            FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_SWISS,
+            L"Segoe UI Symbol"
+        );
+        SelectObject(hdc, hFont);
+        //左上
+        TextOut(hdc, 20, 20, L"9", 1);
+        SelectObject(hdc, hSmall);
+        TextOut(hdc, 20, 50, L"♠", 1);
+
+        // 中間與其他大黑桃（恢復大字型）
+        SelectObject(hdc, hFont);
+
+        // 中間
+        int cx = 100;
+        int dx = 40;
+        //第一行
+        TextOut(hdc, cx - dx, 40, L"♠", 1);
+        TextOut(hdc, cx + dx, 40, L"♠", 1);
+        //第二行
+        TextOut(hdc, cx, 70, L"♠", 1);
+        //第三行
+        TextOut(hdc, cx - dx, 100, L"♠", 1);
+        TextOut(hdc, cx + dx, 100, L"♠", 1);
+        //第四行(撲克牌的水平中線，後續拿來計算座標)
+        //第五行
+        TextOut(hdc, cx - dx, 160, L"♠", 1);
+        TextOut(hdc, cx + dx, 160, L"♠", 1);
+        //第六行(8會用到)
+        /*TextOut(hdc, cx, 190, L"♠", 1);*/
+        //第七行 - 需要 180 度翻轉的兩個黑桃
+        TextOut(hdc, cx - dx, 220, L"♠", 1);
+        TextOut(hdc, cx + dx, 220, L"♠", 1);
+
+        //右下旋轉開始
+        XFORM xf;
+
+        //180度旋轉 
+        xf.eM11 = -1; 
+        xf.eM12 = 0; 
+        xf.eM21 = 0; 
+        xf.eM22 = -1;
+
+        //平移 (重點)
+        xf.eDx = 220;
+        xf.eDy = 300;
+
+
+		SetWorldTransform(hdc, &xf);
+
+        //再翻轉後座標系畫左上角 -> 變右下角
+        TextOut(hdc, 20, 20, L"9", 1);
+        SelectObject(hdc, hSmall);
+        TextOut(hdc, 20, 50, L"♠", 1);
+
+        //還原
+        ModifyWorldTransform(hdc, NULL, MWT_IDENTITY);
+
+        DeleteObject(hFont);
+        EndPaint(hwnd, &ps);
+
+        EndPaint(hwnd, &ps);
+
+        break;
+    }
+
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+HMENU CreateAppMenu() {
+    HMENU hMenuBar = CreateMenu();
+
+    AppendMenu(hMenuBar, MF_STRING, ID_SINGLE, _T("單人計時賽"));
+    AppendMenu(hMenuBar, MF_STRING, ID_DOUBLE, _T("雙人鍵盤競速"));
+    AppendMenu(hMenuBar, MF_STRING, ID_MUTIPLE, _T("多人視覺辨識賽"));
+    AppendMenu(hMenuBar, MF_STRING, ID_HELP_ABOUT, _T("說明"));
+    return hMenuBar;
+}
+
+int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE, LPTSTR, int nCmdShow)
+{
+    const TCHAR CLASS_NAME[] = _T("Win32MenuExample");
+    WNDCLASS wc = {};
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = CLASS_NAME;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+
+    if (!RegisterClass(&wc)) {
+        MessageBox(NULL, _T("Window Registration Failed!"), _T("Error"), MB_ICONERROR);
+        return 0;
+    }
+    HWND hwnd = CreateWindow(CLASS_NAME, _T("心臟病(第17組:1142003 1142023 1142034 1142049 11422055"), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 500, 300,
+        NULL, NULL, hInstance, NULL
+    );
+
+    if (!hwnd) {
+        MessageBox(NULL, _T("Window Creation Failed!"), _T("Error"), MB_ICONERROR);
+        return 0;
+    }
+    SetMenu(hwnd, CreateAppMenu());
+    ShowWindow(hwnd, nCmdShow);
+    UpdateWindow(hwnd);
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    return (int)msg.wParam;
+}
