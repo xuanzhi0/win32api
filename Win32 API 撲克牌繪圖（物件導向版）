@@ -1,0 +1,387 @@
+#include <windows.h>
+#include <string>
+#include <vector>
+#include <array>
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "user32.lib")
+//==================================================
+// 基本資料結構
+//==================================================
+struct Suit {
+    const wchar_t* symbol;
+    const wchar_t* name;
+    COLORREF color;
+};
+struct CardValue {
+    const wchar_t* label;
+    int value;
+};
+struct PipPos {
+    int dx;
+    int dy;
+};
+//==================================================
+// 文字繪製工具類別
+//==================================================
+class TextRenderer {
+public:
+    static void Draw(
+        HDC hdc,
+        int x, int y,
+        const std::wstring& text,
+        int fontSize,
+        COLORREF color,
+        UINT textAlign,
+        int angle10 = 0,
+        const wchar_t* fontName = L"Segoe UI Symbol",
+        int fontWeight = FW_NORMAL)
+    {
+        LOGFONTW lf = {};
+        lf.lfHeight = -fontSize;
+        lf.lfEscapement = angle10;
+        lf.lfOrientation = angle10;
+        lf.lfWeight = fontWeight;
+        lf.lfCharSet = DEFAULT_CHARSET;
+        lstrcpyW(lf.lfFaceName, fontName);
+        HFONT hFont = CreateFontIndirectW(&lf);
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+        COLORREF oldColor = SetTextColor(hdc, color);
+        int oldBkMode = SetBkMode(hdc, TRANSPARENT);
+        UINT oldAlign = SetTextAlign(hdc, textAlign);
+        TextOutW(hdc, x, y, text.c_str(), static_cast<int>(text.length()));
+        SetTextAlign(hdc, oldAlign);
+        SetBkMode(hdc, oldBkMode);
+        SetTextColor(hdc, oldColor);
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hFont);
+    }
+};
+//==================================================
+// 點數牌花色位置配置
+//==================================================
+class PipLayout {
+public:
+    static std::vector< PipPos> GetPositions(int count) {
+        int top = -55;
+        int bottom = 55;
+        int v31 = top / 2;          // -27
+        int v32 = -v31;             // 27
+        int v41 = top / 3;          // -18
+        int v42 = -v41;             // 18
+        int v51 = (top + v41) / 2;  // -36
+        int v52 = -v51;             // 36
+        int mid = 0;
+        int cen = 0;
+        int left = -25;
+        int right = 25;
+        std::vector < std::vector <PipPos>> positions(11);
+        positions[1] = { {cen, mid} };
+        positions[2] = { {cen, top}, {cen, bottom} };
+        positions[3] = { {cen, top}, {cen, mid}, {cen, bottom} };
+        positions[4] = { {left, top}, {right, top}, {left, bottom}, {right, bottom} };
+        positions[5] = { {left, top}, {right, top}, {cen, mid}, {left, bottom}, {right, bottom} };
+        positions[6] = { {left, top}, {right, top}, {left, mid}, {right, mid}, {left, bottom}, {right, bottom} };
+        positions[7] = { {left, top}, {right, top}, {cen, v31}, {left, mid}, {right, mid}, {left, bottom}, {right, bottom} };
+        positions[8] = { {left, top}, {right, top}, {cen, v31}, {left, mid}, {right, mid}, {cen, v32}, {left, bottom}, {right, bottom} };
+        positions[9] = { {left, top}, {right, top}, {cen, v51}, {left, v41}, {right, v41}, {left, v42}, {right, v42}, {left, bottom}, {right, bottom} };
+        positions[10] = { {left, top}, {right, top}, {cen, v51}, {left, v41}, {right, v41}, {left, v42}, {right, v42}, {cen, v52}, {left, bottom}, {right, bottom} };
+        if (count < 1 || count > 10) return {};
+        return positions[count];
+    }
+};
+//==================================================
+// 單張牌類別
+//==================================================
+class Card {
+private:
+    Suit suit_;
+    CardValue value_;
+    static constexpr int WIDTH = 120;
+    static constexpr int HEIGHT = 180;
+    static constexpr int PADDING = 10;
+public:
+    Card(const CardValue& value, const Suit& suit)
+        : suit_(suit), value_(value) {
+    }
+    void Draw(HDC hdc, int left, int top) const {
+        DrawCardFrame(hdc, left, top);
+        int innerLeft = left + PADDING;
+        int innerTop = top + PADDING;
+        int innerW = WIDTH - 2 * PADDING;
+        int innerH = HEIGHT - 2 * PADDING;
+        int innerCx = innerLeft + innerW / 2;
+        int innerCy = innerTop + innerH / 2;
+        DrawTopLeftCorner(hdc, innerLeft, innerTop);
+        DrawBottomRightCorner(hdc, left, top);
+        if (value_.value <= 10) {
+            DrawPips(hdc, value_.value, innerCx, innerCy);
+        }
+        else {
+            DrawFaceCard(hdc, innerCx, innerCy);
+        }
+    }
+    static int GetWidth() { return WIDTH; }
+    static int GetHeight() { return HEIGHT; }
+private:
+    void DrawCardFrame(HDC hdc, int left, int top) const {
+        HBRUSH hWhite = CreateSolidBrush(RGB(255, 255, 255));
+        HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hWhite);
+        HPEN hPen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+        HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+        RoundRect(hdc, left, top, left + WIDTH, top + HEIGHT, 10, 10);
+        SelectObject(hdc, hOldBrush);
+        SelectObject(hdc, hOldPen);
+        DeleteObject(hWhite);
+        DeleteObject(hPen);
+    }
+    void DrawTopLeftCorner(HDC hdc, int innerLeft, int innerTop) const {
+        TextRenderer::Draw(
+            hdc,
+            innerLeft,
+            innerTop + 16,
+            value_.label,
+            16,
+            suit_.color,
+            TA_LEFT | TA_BASELINE,
+            0,
+            L"Segoe UI",
+            FW_NORMAL
+        );
+        TextRenderer::Draw(
+            hdc,
+            innerLeft,
+            innerTop + 32,
+            suit_.symbol,
+            16,
+            suit_.color,
+            TA_LEFT | TA_BASELINE,
+            0,
+            L"Segoe UI Symbol",
+            FW_NORMAL
+        );
+    }
+    void DrawBottomRightCorner(HDC hdc, int left, int top) const {
+        TextRenderer::Draw(
+            hdc,
+            left + WIDTH - PADDING * 2,
+            top + HEIGHT - PADDING * 2 - 16,
+            suit_.symbol,
+            16,
+            suit_.color,
+            TA_RIGHT | TA_BASELINE,
+            1800,
+            L"Segoe UI Symbol",
+            FW_NORMAL
+        );
+        TextRenderer::Draw(
+            hdc,
+            left + WIDTH - PADDING * 2,
+            top + HEIGHT - PADDING * 2,
+            value_.label,
+            16,
+            suit_.color,
+            TA_RIGHT | TA_BASELINE,
+            1800,
+            L"Segoe UI",
+            FW_NORMAL
+        );
+    }
+    void DrawPips(HDC hdc, int count, int cx, int cy) const {
+        auto positions = PipLayout::GetPositions(count);
+        for (const auto& p : positions) {
+            int x = cx + p.dx;
+            int y = cy + p.dy;
+            if (p.dy < 5) {
+                TextRenderer::Draw(
+                    hdc,
+                    x, y,
+                    suit_.symbol,
+                    24,
+                    suit_.color,
+                    TA_CENTER | TA_BASELINE,
+                    0,
+                    L"Segoe UI Symbol",
+                    FW_NORMAL
+                );
+            }
+            else {
+                // 底部花色倒轉
+                TextRenderer::Draw(
+                    hdc,
+                    x, y,
+                    suit_.symbol,
+                    24,
+                    suit_.color,
+                    TA_CENTER | TA_BASELINE,
+                    1800,
+                    L"Segoe UI Symbol",
+                    FW_NORMAL
+                );
+            }
+        }
+    }
+    void DrawFaceCard(HDC hdc, int cx, int cy) const {
+        TextRenderer::Draw(
+            hdc,
+            cx,
+            cy + 14,
+            value_.label,
+            40,
+            suit_.color,
+            TA_CENTER | TA_BASELINE,
+            0,
+            L"Segoe UI",
+            FW_BOLD
+        );
+    }
+};
+//==================================================
+// 牌組類別：管理 52 張撲克牌
+//==================================================
+class Deck {
+private:
+    std::vector< Card> cards_;
+public:
+    Deck() {
+        Initialize();
+    }
+    void Draw(HDC hdc, int startX, int startY, int gapX, int gapY) const {
+        const int cardW = Card::GetWidth();
+        const int cardH = Card::GetHeight();
+        for (size_t i = 0; i < cards_.size(); ++i) {
+            int row = static_cast<int>(i / 13);
+            int col = static_cast<int>(i % 13);
+            int x = startX + col * (cardW + gapX);
+            int y = startY + row * (cardH + gapY);
+            cards_[i].Draw(hdc, x, y);
+        }
+    }
+private:
+    void Initialize() {
+        static const std::array<Suit, 4> suits = {
+            Suit{ L"♠", L"spade",   RGB(0, 0, 0) },
+            Suit{ L"♥", L"heart",   RGB(220, 0, 0) },
+            Suit{ L"♦", L"diamond", RGB(220, 0, 0) },
+            Suit{ L"♣", L"club",    RGB(0, 0, 0) }
+        };
+        static const std::array<CardValue, 13> values = {
+            CardValue{ L"A",  1  },
+            CardValue{ L"2",  2  },
+            CardValue{ L"3",  3  },
+            CardValue{ L"4",  4  },
+            CardValue{ L"5",  5  },
+            CardValue{ L"6",  6  },
+            CardValue{ L"7",  7  },
+            CardValue{ L"8",  8  },
+            CardValue{ L"9",  9  },
+            CardValue{ L"10", 10 },
+            CardValue{ L"J",  11 },
+            CardValue{ L"Q",  12 },
+            CardValue{ L"K",  13 }
+        };
+        cards_.clear();
+        cards_.reserve(52);
+        for (const auto& suit : suits) {
+            for (const auto& value : values) {
+                cards_.emplace_back(value, suit);
+            }
+        }
+    }
+};
+//==================================================
+// 主視窗 App 類別
+//==================================================
+class PokerWindowApp {
+private:
+    HINSTANCE hInstance_;
+    HWND hwnd_;
+    Deck deck_;
+    static constexpr const wchar_t* CLASS_NAME = L"PokerCardWin32OOP";
+public:
+    explicit PokerWindowApp(HINSTANCE hInstance)
+        : hInstance_(hInstance), hwnd_(nullptr) {
+    }
+    bool Create(int nCmdShow) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = PokerWindowApp::WndProc;
+        wc.hInstance = hInstance_;
+        wc.lpszClassName = CLASS_NAME;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        RegisterClassW(&wc);
+        hwnd_ = CreateWindowExW(
+            0,
+            CLASS_NAME,
+            L"Win32 API 撲克牌繪圖（物件導向版）",
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, CW_USEDEFAULT,
+            1800, 900,
+            nullptr,
+            nullptr,
+            hInstance_,
+            this
+        );
+        if (!hwnd_) return false;
+        ShowWindow(hwnd_, nCmdShow);
+        UpdateWindow(hwnd_);
+        return true;
+    }
+    int Run() {
+        MSG msg = {};
+        while (GetMessageW(&msg, nullptr, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        return static_cast<WPARAM>(msg.wParam);
+    }
+private:
+    void OnPaint() {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd_, &ps);
+        RECT rc;
+        GetClientRect(hwnd_, &rc);
+        HBRUSH bg = CreateSolidBrush(RGB(255, 255, 255));
+        FillRect(hdc, &rc, bg);
+        DeleteObject(bg);
+        deck_.Draw(hdc, 20, 20, 10, 20);
+        EndPaint(hwnd_, &ps);
+    }
+    LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
+        switch (msg) {
+        case WM_PAINT:
+            OnPaint();
+            return 0;
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcW(hwnd_, msg, wParam, lParam);
+    }
+    static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        PokerWindowApp* pThis = nullptr;
+        if (msg == WM_NCCREATE) {
+            CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+            pThis = static_cast<PokerWindowApp*>(cs->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
+            pThis->hwnd_ = hwnd;
+        }
+        else {
+            pThis = reinterpret_cast<PokerWindowApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        }
+        if (pThis) {
+            return pThis->HandleMessage(msg, wParam, lParam);
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+};
+//==================================================
+// WinMain
+//==================================================
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
+{
+    PokerWindowApp app(hInstance);
+    if (!app.Create(nCmdShow)) {
+        return 0;
+    }
+    return app.Run();
+}
