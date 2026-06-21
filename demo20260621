@@ -1,0 +1,838 @@
+#include <windows.h>
+#include <string>
+#include <vector>
+#include <array>
+#include <random>
+#include <sstream>
+#include <algorithm>
+
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "user32.lib")
+
+//=============================================================================
+// 基本資料結構
+//=============================================================================
+
+/**
+ * @brief 表示撲克牌花色的資料結構。
+ *
+ * @param symbol 花色符號（寬字元字串，例如 "♠"）。
+ * @param name 花色英文名稱（寬字元字串）。
+ * @param color GDI 顏色值 (COLORREF)。
+ */
+struct Suit {
+    const wchar_t* symbol;
+    const wchar_t* name;
+    COLORREF color;
+};
+
+/**
+ * @brief 表示牌面點數與標籤。
+ *
+ * @param label 牌面顯示的文字（寬字元字串，例如 "A","J","10"）。
+ * @param value 對應的數值（A=1, J=11, Q=12, K=13）。
+ */
+struct CardValue {
+    const wchar_t* label;
+    int value;
+};
+
+/**
+ * @brief 用於描述點數（pips）在卡片中心的偏移量。
+ *
+ * @param dx X 軸偏移（相對於卡片中心）。
+ * @param dy Y 軸偏移（相對於卡片中心）。
+ */
+struct PipPos {
+    int dx;
+    int dy;
+};
+
+//=============================================================================
+// 文字繪製工具類別
+//=============================================================================
+/**
+ * @brief 靜態文字繪製工具，封裝 Win32 字型與文字輸出流程。
+ */
+class TextRenderer {
+public:
+    /**
+     * @brief 在指定裝置環境 (HDC) 上繪製文字。
+     *
+     * @param hdc 繪圖 HDC。
+     * @param x 文字起始 X 座標。
+     * @param y 文字基線 Y 座標。
+     * @param text 要繪製的文字（std::wstring）。
+     * @param fontSize 字型大小（像素）。
+     * @param color 文字顏色 (COLORREF)。
+     * @param textAlign 文字對齊（TA_* 標記）。
+     * @param angle10 文字傾角（以 1/10 度為單位，預設 0）。
+     * @param fontName 字型名稱（寬字元字串）。
+     * @param fontWeight 字重（例如 FW_NORMAL, FW_BOLD）。
+     */
+    static void Draw(
+        HDC hdc,
+        int x, int y,
+        const std::wstring& text,
+        int fontSize,
+        COLORREF color,
+        UINT textAlign,
+        int angle10 = 0,
+        const wchar_t* fontName = L"Segoe UI Symbol",
+        int fontWeight = FW_NORMAL)
+    {
+        LOGFONTW lf = {};
+        lf.lfHeight = -fontSize;
+        lf.lfEscapement = angle10;
+        lf.lfOrientation = angle10;
+        lf.lfWeight = fontWeight;
+        lf.lfCharSet = DEFAULT_CHARSET;
+        lstrcpyW(lf.lfFaceName, fontName);
+
+        HFONT hFont = CreateFontIndirectW(&lf);
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+
+        COLORREF oldColor = SetTextColor(hdc, color);
+        int oldBkMode = SetBkMode(hdc, TRANSPARENT);
+        UINT oldAlign = SetTextAlign(hdc, textAlign);
+
+        TextOutW(hdc, x, y, text.c_str(), static_cast<int>(text.length()));
+
+        SetTextAlign(hdc, oldAlign);
+        SetBkMode(hdc, oldBkMode);
+        SetTextColor(hdc, oldColor);
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hFont);
+    }
+};
+
+//=============================================================================
+// 點數牌花色位置配置
+//=============================================================================
+/**
+ * @brief 提供不同點數（1..10）對應的 pip 位置配置。
+ *
+ * GetPositions 會回傳相對於卡片中心的偏移清單，用於排列點數圖示（♠ ♥ ♦ ♣）。
+ */
+class PipLayout {
+public:
+    /**
+     * @brief 取得指定點數的 pip 位置（相對於卡片中心）。
+     *
+     * @param count 點數數量（1..10）。
+     * @return std::vector<PipPos> 若參數不在範圍內則回傳空 vector。
+     */
+    static std::vector<PipPos> GetPositions(int count) {
+        int top = -55;
+        int bottom = 55;
+        int v31 = top / 2;          //-27
+        int v32 = -v31;             //27
+        int v41 = top / 3;          //-18
+        int v42 = -v41;             //-18
+        int v51 = (top + v41) / 2;  //-36
+        int v52 = -v51;             //36
+        int mid = 0;
+        int cen = 0;
+        int left = -25;
+        int right = 25;
+
+        std::vector<std::vector<PipPos>> positions(11);
+        positions[1] = { {cen, mid} };
+        positions[2] = { {cen, top}, {cen, bottom} };
+        positions[3] = { {cen, top}, {cen, mid}, {cen, bottom} };
+        positions[4] = { {left, top}, {right, top}, {left, bottom}, {right, bottom} };
+        positions[5] = { {left, top}, {right, top}, {cen, mid}, {left, bottom}, {right, bottom} };
+        positions[6] = { {left, top}, {right, top}, {left, mid}, {right, mid}, {left, bottom}, {right, bottom} };
+        positions[7] = { {left, top}, {right, top}, {left, mid}, {right, mid}, {cen, v31}, {left, bottom}, {right, bottom} };
+        positions[8] = { {left, top}, {right, top}, {cen, v31}, {left, mid}, {right, mid}, {cen, v32}, {left, bottom}, {right, bottom} };
+        positions[9] = { {left, top}, {right, top}, {cen, v51}, {left, v41}, {right, v41}, {left, v42}, {right, v42}, {left, bottom}, {right, bottom} };
+        positions[10] = { {left, top}, {right, top}, {cen, v51}, {left, v41}, {right, v41}, {left, v42}, {right, v42}, {cen, v52}, {left, bottom}, {right, bottom} };
+
+        if (count < 1 || count > 10) return {};
+        return positions[count];
+    }
+};
+
+//=============================================================================
+// 單張牌類別
+//=============================================================================
+/**
+ * @brief 表示一張撲克牌，負責該牌的繪製邏輯（邊框、角落標記、pips、face）。
+ */
+class Card {
+private:
+    Suit suit_;
+    CardValue value_;
+
+    static constexpr int WIDTH = 120;
+    static constexpr int HEIGHT = 180;
+    static constexpr int PADDING = 10;
+
+public:
+    /**
+     * @brief 建構函式，使用牌值與花色建立 Card。
+     *
+     * @param value 卡牌的數值與標籤。
+     * @param suit 卡牌的花色。
+     */
+    Card(const CardValue& value, const Suit& suit)
+        : suit_(suit), value_(value) {
+    }
+
+    /**
+     * @brief 在指定位置繪製整張卡片。
+     *
+     * @param hdc 繪圖 HDC。
+     * @param left 卡片左上角 X 座標。
+     * @param top 卡片左上角 Y 座標。
+     */
+    void Draw(HDC hdc, int left, int top) const {
+        DrawCardFrame(hdc, left, top);
+
+        int innerLeft = left + PADDING;
+        int innerTop = top + PADDING;
+        int innerW = WIDTH - 2 * PADDING;
+        int innerH = HEIGHT - 2 * PADDING;
+        int innerCx = innerLeft + innerW / 2;
+        int innerCy = innerTop + innerH / 2;
+
+        DrawTopLeftCorner(hdc, innerLeft, innerTop);
+        DrawBottomRightCorner(hdc, left, top);
+
+        if (value_.value >= 1 && value_.value <= 10) {
+            DrawPips(hdc, value_.value, innerCx, innerCy);
+        }
+        else {
+            DrawFaceCard(hdc, innerCx, innerCy);
+        }
+    }
+
+    /**
+     * @brief 取得卡片固定寬度（像素）。
+     * @return int 寬度。
+     */
+    static int GetWidth() { return WIDTH; }
+
+    /**
+     * @brief 取得卡片固定高度（像素）。
+     * @return int 高度。
+     */
+    static int GetHeight() { return HEIGHT; }
+
+private:
+    /**
+     * @brief 繪製卡片外框與白色背景。
+     *
+     * @param hdc 繪圖 HDC。
+     * @param left 卡片左上角 X 座標。
+     * @param top 卡片左上角 Y 座標。
+     */
+    void DrawCardFrame(HDC hdc, int left, int top) const {
+        HBRUSH hWhite = CreateSolidBrush(RGB(255, 255, 255));
+        HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hWhite);
+
+        HPEN hPen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+        HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+
+        RoundRect(hdc, left, top, left + WIDTH, top + HEIGHT, 10, 10);
+
+        SelectObject(hdc, hOldBrush);
+        SelectObject(hdc, hOldPen);
+        DeleteObject(hWhite);
+        DeleteObject(hPen);
+    }
+
+    /**
+     * @brief 繪製左上角的牌面文字與花色符號。
+     *
+     * @param hdc 繪圖 HDC。
+     * @param innerLeft 內部左邊界 X。
+     * @param innerTop 內部上邊界 Y。
+     */
+    void DrawTopLeftCorner(HDC hdc, int innerLeft, int innerTop) const {
+        TextRenderer::Draw(hdc, innerLeft, innerTop + 16, value_.label, 16,
+            suit_.color, TA_LEFT | TA_BASELINE, 0, L"Segoe UI", FW_NORMAL);
+
+        TextRenderer::Draw(hdc, innerLeft, innerTop + 32, suit_.symbol, 16,
+            suit_.color, TA_LEFT | TA_BASELINE, 0, L"Segoe UI Symbol", FW_NORMAL);
+    }
+
+    /**
+     * @brief 繪製右下角（旋轉顯示）的牌面與符號。
+     *
+     * @param hdc 繪圖 HDC。
+     * @param left 卡片左上角 X。
+     * @param top 卡片左上角 Y。
+     */
+    void DrawBottomRightCorner(HDC hdc, int left, int top) const {
+        TextRenderer::Draw(hdc, left + WIDTH - PADDING * 2, top + HEIGHT - PADDING * 2 - 16,
+            suit_.symbol, 16, suit_.color, TA_RIGHT | TA_BASELINE, 1800, L"Segoe UI Symbol", FW_NORMAL);
+
+        TextRenderer::Draw(hdc, left + WIDTH - PADDING * 2, top + HEIGHT - PADDING * 2,
+            value_.label, 16, suit_.color, TA_RIGHT | TA_BASELINE, 1800, L"Segoe UI", FW_NORMAL);
+    }
+
+    /**
+     * @brief 根據點數 count 在卡片中心繪製對應 pips。
+     *
+     * @param hdc 繪圖 HDC。
+     * @param count 點數數量（1..10）。
+     * @param cx 卡片內部中心 X。
+     * @param cy 卡片內部中心 Y。
+     */
+    void DrawPips(HDC hdc, int count, int cx, int cy) const {
+        auto positions = PipLayout::GetPositions(count);
+
+        for (const auto& p : positions) {
+            int x = cx + p.dx;
+            int y = cy + p.dy;
+
+            if (p.dy < 5) {
+                TextRenderer::Draw(hdc, x, y, suit_.symbol, 24, suit_.color,
+                    TA_CENTER | TA_BASELINE, 0, L"Segoe UI Symbol", FW_NORMAL);
+            }
+            else {
+                TextRenderer::Draw(hdc, x, y, suit_.symbol, 24, suit_.color,
+                    TA_CENTER | TA_BASELINE, 1800, L"Segoe UI Symbol", FW_NORMAL);
+            }
+        }
+    }
+
+    /**
+     * @brief 繪製人像牌（J/Q/K）的大字顯示。
+     *
+     * @param hdc 繪圖 HDC。
+     * @param cx 卡片內部中心 X。
+     * @param cy 卡片內部中心 Y。
+     */
+    void DrawFaceCard(HDC hdc, int cx, int cy) const {
+        TextRenderer::Draw(hdc, cx, cy + 14, value_.label, 40, suit_.color,
+            TA_CENTER | TA_BASELINE, 0, L"Segoe UI", FW_BOLD);
+    }
+};
+
+//=============================================================================
+// 主視窗 App 類別
+//=============================================================================
+/**
+ * @brief 負責整個視窗與遊戲流程的主應用類別（Win32 message loop）。
+ *
+ * 包含選單建立、遊戲邏輯、定時器、快捷鍵處理與繪製流程。
+ */
+class PokerWindowApp {
+private:
+    HINSTANCE hInctance_;
+    HWND hwnd_;
+
+    int currentSuitIndex_ = 0;
+    int currentValueIndex_ = 0;
+
+    int currentShownSeqIndex_ = 0;
+    int nextSeqIndex_ = 0;
+
+    bool running_ = false;
+    bool hasCurrentItem_ = false;
+    bool isDoubleMode_ = false;    // 區分單人或雙人模式
+    int countdownValue_ = 0;       // 321倒數數值 (0代表倒數結束)
+
+    ULONGLONG shownTick_ = 0;
+    std::mt19937 rng_;
+
+    std::vector<int> deckOrder_;
+    size_t deckPos_ = 0;
+
+    bool anyMatchOccurred_ = false;
+
+    static constexpr const wchar_t* CLASS_NAME = L"PokerCardWin32MenuReaction";
+    static constexpr UINT TIMER_ID = 1001;
+
+    static constexpr UINT ID_MENU_START_SINGLE = 40001;
+    static constexpr UINT ID_MENU_START_DOUBLE = 40002;
+    static constexpr UINT ID_MENU_START_MUTIPLE = 40003;
+    static constexpr UINT ID_MENU_STOP = 40004;
+    static constexpr UINT ID_MENU_EXIT = 40005;
+    static constexpr UINT ID_HELP_ABOUT = 10006;
+
+    // 快捷鍵 ID
+    static constexpr int HOTKEY_ID_SPACE = 50001;
+    static constexpr int HOTKEY_ID_PLAYER_A = 50002;
+    static constexpr int HOTKEY_ID_PLAYER_L = 50003;
+
+public:
+    /**
+     * @brief 建構 PokerWindowApp。
+     * @param hInctance 應用程式的 HINSTANCE。
+     */
+    explicit PokerWindowApp(HINSTANCE hInctance)
+        : hInctance_(hInctance), hwnd_(nullptr), rng_(std::random_device{}()) {
+    }
+
+    /**
+     * @brief 建立主視窗與初始化 UI（註冊類別、建立視窗、設定選單）。
+     *
+     * @param nCmdShow 傳給 ShowWindow 的顯示旗標。
+     * @return true 建立成功，false 建立失敗。
+     */
+    bool Create(int nCmdShow) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = PokerWindowApp::WndProc;
+        wc.hInstance = hInctance_;
+        wc.lpszClassName = CLASS_NAME;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+
+        RegisterClassW(&wc);
+
+        hwnd_ = CreateWindowExW(
+            0,
+            CLASS_NAME,
+            L"Win32 API 撲克牌反應測試",
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, CW_USEDEFAULT,
+            1000, 700,
+            nullptr,
+            nullptr,
+            hInctance_,
+            this
+        );
+
+        if (!hwnd_) return false;
+
+        SetMenu(hwnd_, CreateAppMenu());
+
+        ShowWindow(hwnd_, nCmdShow);
+        UpdateWindow(hwnd_);
+        return true;
+    }
+
+    /**
+     * @brief 進入 Win32 訊息迴圈並執行應用程式，直到收到 WM_QUIT。
+     * @return int 主訊息回傳值（通常為 wParam）。
+     */
+    int Run() {
+        MSG msg = {};
+        while (GetMessageW(&msg, nullptr, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        return static_cast<int>(msg.wParam);
+    }
+
+private:
+    /**
+     * @brief 建立應用程式功能選單（含開始 / 停止 / 說明 / 結束）。
+     * @return HMENU 建立完成的選單句柄。
+     */
+    HMENU CreateAppMenu() {
+        HMENU hMenuBar = CreateMenu();
+        AppendMenuW(hMenuBar, MF_STRING, ID_MENU_START_SINGLE, L"【單人計時賽】");
+        AppendMenuW(hMenuBar, MF_STRING, ID_MENU_START_DOUBLE, L"【雙人鍵盤競速】");
+        AppendMenuW(hMenuBar, MF_STRING, ID_MENU_START_MUTIPLE, L"【多人視覺辨識賽】");
+        AppendMenuW(hMenuBar, MF_STRING, ID_MENU_STOP, L"停止");
+        AppendMenuW(hMenuBar, MF_STRING, ID_HELP_ABOUT, L"遊戲說明");
+        AppendMenuW(hMenuBar, MF_STRING, ID_MENU_EXIT, L"結束");
+        return hMenuBar;
+    }
+
+    /**
+     * @brief 取得遊戲使用的四個花色陣列（靜態常數）。
+     * @return const std::array<Suit,4>& 花色陣列引用。
+     */
+    static const std::array<Suit, 4>& GetSuits() {
+        static const std::array<Suit, 4> suits = {
+            Suit{ L"♠", L"spade",  RGB(0, 0, 0) },
+            Suit{ L"♥", L"heart",  RGB(220, 0, 0) },
+            Suit{ L"♦", L"diamond",RGB(220, 0, 0) },
+            Suit{ L"♣", L"club",   RGB(0, 0, 0) }
+        };
+        return suits;
+    }
+
+    /**
+     * @brief 取得牌值陣列（A..K）。
+     * @return const std::array<CardValue,13>& 牌值陣列引用。
+     */
+    static const std::array<CardValue, 13>& GetCardValues() {
+        static const std::array<CardValue, 13> values = {
+            CardValue{ L"A",  1 }, CardValue{ L"2",  2 }, CardValue{ L"3",  3 },
+            CardValue{ L"4",  4 }, CardValue{ L"5",  5 }, CardValue{ L"6",  6 },
+            CardValue{ L"7",  7 }, CardValue{ L"8",  8 }, CardValue{ L"9",  9 },
+            CardValue{ L"10", 10 }, CardValue{ L"J",  11 }, CardValue{ L"Q",  12 },
+            CardValue{ L"K",  13 }
+        };
+        return values;
+    }
+
+    /**
+     * @brief 取得右側顯示序列文字（1..K）。
+     * @return const std::array<const wchar_t*,13>& 字串陣列引用。
+     */
+    static const std::array<const wchar_t*, 13>& GetSequenceLabels() {
+        static const std::array<const wchar_t*, 13> seq = {
+            L"1", L"2", L"3", L"4", L"5", L"6", L"7", L"8", L"9", L"10", L"J", L"Q", L"K"
+        };
+        return seq;
+    }
+
+    /**
+     * @brief 回傳介於 500 ~ 1500 毫秒之間的隨機整數（平均均勻分布）。
+     * @return int 隨機毫秒數。
+     */
+    int RandomIntervalMs() {
+        std::uniform_int_distribution<int> dist(500, 1500);
+        return dist(rng_);
+    }
+
+    /**
+     * @brief 建造並打亂一副 52 張牌的索引序列。
+     */
+    void BuildShuffledDeck() {
+        deckOrder_.clear();
+        deckOrder_.reserve(52);
+        for (int i = 0; i < 52; ++i) {
+            deckOrder_.push_back(i);
+        }
+        std::shuffle(deckOrder_.begin(), deckOrder_.end(), rng_);
+        deckPos_ = 0;
+    }
+
+    /**
+     * @brief 檢查目前顯示的卡牌與右側數字是否相符（A 與 1 視為相符）。
+     * @return true 相符，false 不相符。
+     */
+    bool IsCardAndTextMatched() const {
+        const auto& values = GetCardValues();
+        const auto& seq = GetSequenceLabels();
+
+        std::wstring cardText = values[currentValueIndex_].label;
+        std::wstring shownText = seq[currentShownSeqIndex_];
+
+        if (cardText == L"A" && shownText == L"1") return true;
+        return cardText == shownText;
+    }
+
+    /**
+     * @brief 啟動發牌序列（單人或雙人模式），並開始 3..2..1 倒數。
+     *
+     * @param doubleMode 若為 true 則啟用雙人模式（註冊 A 與 L 快捷鍵），否則註冊空白鍵。
+     */
+    void StartSequence(bool doubleMode) {
+        StopSequence();
+
+        isDoubleMode_ = doubleMode;
+        running_ = true;
+        hasCurrentItem_ = false;
+        nextSeqIndex_ = 0;
+        currentShownSeqIndex_ = 0;
+        anyMatchOccurred_ = false;
+        countdownValue_ = 3; // 設定 3 秒倒數
+
+        BuildShuffledDeck();
+
+        // 註冊對應模式的按鍵
+        if (isDoubleMode_) {
+            RegisterHotKey(hwnd_, HOTKEY_ID_PLAYER_A, 0, 'A');
+            RegisterHotKey(hwnd_, HOTKEY_ID_PLAYER_L, 0, 'L');
+        }
+        else {
+            RegisterHotKey(hwnd_, HOTKEY_ID_SPACE, 0, VK_SPACE);
+        }
+
+        // 啟動倒數定時器 (固定 1 秒跳一次)
+        SetTimer(hwnd_, TIMER_ID, 1000, nullptr);
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    /**
+     * @brief 停止序列（關閉定時器、取消註冊快捷鍵、重置狀態）。
+     */
+    void StopSequence() {
+        KillTimer(hwnd_, TIMER_ID);
+        UnregisterHotKey(hwnd_, HOTKEY_ID_SPACE);
+        UnregisterHotKey(hwnd_, HOTKEY_ID_PLAYER_A);
+        UnregisterHotKey(hwnd_, HOTKEY_ID_PLAYER_L);
+        running_ = false;
+        hasCurrentItem_ = false;
+        countdownValue_ = 0;
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    }
+
+    /**
+     * @brief 重新設定定時器，以隨機間隔（0.5~1.5s）觸發下一次顯示。
+     */
+    void ScheduleNextTimer() {
+        KillTimer(hwnd_, TIMER_ID);
+        SetTimer(hwnd_, TIMER_ID, RandomIntervalMs(), nullptr);
+    }
+
+    /**
+     * @brief 顯示下一張卡片並更新內部索引與狀態。
+     * @return true 成功顯示下一張，false 若已無牌則回傳 false。
+     */
+    bool ShowNextItem() {
+        if (deckPos_ >= deckOrder_.size()) return false;
+
+        int cardId = deckOrder_[deckPos_++];
+        currentSuitIndex_ = cardId / 13;
+        currentValueIndex_ = cardId % 13;
+
+        currentShownSeqIndex_ = nextSeqIndex_;
+        nextSeqIndex_ = (nextSeqIndex_ + 1) % 13;
+
+        shownTick_ = GetTickCount64();
+        hasCurrentItem_ = true;
+
+        if (IsCardAndTextMatched()) {
+            anyMatchOccurred_ = true;
+        }
+
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return true;
+    }
+
+    /**
+     * @brief 當牌已發完且無任何匹配發生時，顯示結束訊息並停止序列。
+     */
+    void ShowNoMatchFailureIfNeeded() {
+        StopSequence();
+        MessageBoxW(hwnd_, L"52 張牌全部發完！遊戲結束。", L"提示", MB_OK | MB_ICONINFORMATION);
+    }
+
+    /**
+     * @brief 處理單人模式按下空白鍵的邏輯（計算反應時間、判定正誤並顯示結果）。
+     */
+    void HandleSpacePressed() {
+        if (!running_ || !hasCurrentItem_ || countdownValue_ > 0) return;
+
+        ULONGLONG now = GetTickCount64();
+        ULONGLONG elapsed = now - shownTick_;
+        bool correct = IsCardAndTextMatched();
+
+        StopSequence();
+
+        std::wstringstream ss;
+        ss << L"撲克牌：" << GetCardValues()[currentValueIndex_].label << L"\n"
+            << L"右邊數字：" << GetSequenceLabels()[currentShownSeqIndex_] << L"\n"
+            << L"結果：" << (correct ? L"答對" : L"失敗") << L"\n"
+            << L"反應時間：" << elapsed << L" 毫秒";
+
+        MessageBoxW(hwnd_, ss.str().c_str(), correct ? L"答對" : L"失敗", MB_OK | (correct ? MB_ICONINFORMATION : MB_ICONWARNING));
+    }
+
+    /**
+     * @brief 處理雙人模式按鍵（玩家 A 或 L）事件邏輯，計算勝負並彈出結果。
+     *
+     * @param player 按鍵對應的玩家字符（L'A' 或 L'L'）。
+     */
+    void HandleDoublePlayerPressed(wchar_t player) {
+        if (!running_ || !hasCurrentItem_ || countdownValue_ > 0) return;
+
+        ULONGLONG now = GetTickCount64();
+        ULONGLONG elapsed = now - shownTick_;
+        bool isCorrect = IsCardAndTextMatched();
+
+        StopSequence();
+
+        std::wstringstream ss;
+        std::wstring resultTitle = L"結果：玩家" + std::wstring(1, player) + (isCorrect ? L"贏" : L"輸");
+
+        ss << L"玩家 " << player << (isCorrect ? L" 贏了！" : L" 輸了！(錯誤搶答)") << L"\n"
+            << L"反應時間：" << elapsed << L" 毫秒\n"
+            << L"目前卡牌：" << GetCardValues()[currentValueIndex_].label << L"\n"
+            << L"目標數字：" << GetSequenceLabels()[currentShownSeqIndex_];
+
+        MessageBoxW(hwnd_, ss.str().c_str(), resultTitle.c_str(), MB_OK | (isCorrect ? MB_ICONINFORMATION : MB_ICONWARNING));
+    }
+
+    /**
+     * @brief 處理 WM_PAINT 的繪製流程，根據狀態繪製倒數、卡片或提示文字。
+     */
+    void OnPaint() {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd_, &ps);
+
+        RECT rc;
+        GetClientRect(hwnd_, &rc);
+
+        HBRUSH bg = CreateSolidBrush(RGB(255, 255, 255));
+        FillRect(hdc, &rc, bg);
+        DeleteObject(bg);
+
+        int centerX = (rc.left + rc.right) / 2;
+        int centerY = (rc.top + rc.bottom) / 2 + 20;
+
+        // 狀態 1：正在進行 3 2 1 倒數
+        if (running_ && countdownValue_ > 0) {
+            std::wstringstream ss;
+            ss << countdownValue_;
+            TextRenderer::Draw(hdc, centerX, centerY, ss.str(), 120, RGB(230, 40, 40), TA_CENTER | TA_BASELINE, 0, L"Segoe UI", FW_BOLD);
+            TextRenderer::Draw(hdc, centerX, centerY + 60, L"遊戲即將開始，請準備...", 24, RGB(120, 120, 120), TA_CENTER | TA_BASELINE, 0, L"Microsoft JhengHei UI", FW_NORMAL);
+        }
+        // 狀態 2：倒數完畢，遊戲正式進行中且有牌面
+        else if (hasCurrentItem_) {
+            const auto& suits = GetSuits();
+            const auto& values = GetCardValues();
+            const auto& seq = GetSequenceLabels();
+
+            Card card(values[currentValueIndex_], suits[currentSuitIndex_]);
+            int cardW = Card::GetWidth();
+            int cardH = Card::GetHeight();
+            int cardLeft = centerX - cardW / 2;
+            int cardTop = centerY - cardH / 2;
+
+            card.Draw(hdc, cardLeft, cardTop);
+
+            // 右邊目標大數字
+            TextRenderer::Draw(hdc, cardLeft + cardW + 100, centerY + 20, seq[currentShownSeqIndex_], 64, RGB(0, 90, 180), TA_CENTER | TA_BASELINE, 0, L"Segoe UI", FW_BOLD);
+
+            // 頂部提示與模式狀態
+            if (isDoubleMode_) {
+                TextRenderer::Draw(hdc, 50, 50, L"【玩家 A】— 請按 A 鍵", 24, RGB(200, 0, 0), TA_LEFT | TA_TOP, 0, L"Microsoft JhengHei UI", FW_BOLD);
+                TextRenderer::Draw(hdc, rc.right - 50, 50, L"【玩家 L】— 請按 L 鍵", 24, RGB(0, 150, 0), TA_RIGHT | TA_TOP, 0, L"Microsoft JhengHei UI", FW_BOLD);
+                TextRenderer::Draw(hdc, centerX, 50, L"雙人鍵盤競速中...", 20, RGB(128, 128, 128), TA_CENTER | TA_TOP, 0, L"Microsoft JhengHei UI", FW_NORMAL);
+            }
+            else {
+                TextRenderer::Draw(hdc, centerX, 50, L"單人計時賽中... (請按空白鍵反應)", 20, RGB(0, 100, 200), TA_CENTER | TA_TOP, 0, L"Microsoft JhengHei UI", FW_BOLD);
+            }
+
+            // 左下角計數進度
+            std::wstringstream ss;
+            ss << L"第 " << deckPos_ << L" / 52 張";
+            TextRenderer::Draw(hdc, 30, rc.bottom - 30, ss.str(), 18, RGB(80, 80, 80), TA_LEFT | TA_BASELINE, 0, L"Microsoft JhengHei UI", FW_NORMAL);
+        }
+        
+
+
+        EndPaint(hwnd_, &ps);
+    }
+
+    /**
+     * @brief 處理由 WndProc 傳入的訊息，包含選單、定時器、快捷鍵等邏輯。
+     *
+     * @param msg 訊息代碼（WM_*）。
+     * @param wParam WPARAM。
+     * @param lParam LPARAM。
+     * @return LRESULT 若已處理則回傳 0，否則回傳 DefWindowProc 的結果。
+     */
+    LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
+        switch (msg) {
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+            case ID_MENU_START_SINGLE:
+                StartSequence(false);
+                return 0;
+            case ID_MENU_START_DOUBLE:
+                StartSequence(true);
+                return 0;
+            case ID_MENU_STOP:
+                StopSequence();
+                return 0;
+            case ID_MENU_EXIT:
+                DestroyWindow(hwnd_);
+                return 0;
+            case ID_HELP_ABOUT:
+                MessageBoxW(hwnd_,
+                    L"【單人計時賽】：按空白鍵反應。\n\n"
+                    L"【雙人鍵盤競速】：\n"
+                    L"1. 當中央牌面與右側數字一致時，玩家 A 搶按 'A' 鍵，玩家 L 搶按 'L' 鍵！\n"
+                    L"2. 錯誤搶答直接判定為輸。\n"
+                    L"【間隔設定】：卡牌停留時間在 0.5 秒 ~ 1.5 秒之間完全隨機均勻分布。",
+                    L"遊戲說明", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
+            break;
+
+        case WM_TIMER:
+            if (wParam == TIMER_ID && running_) {
+                // 處理開局倒數定時
+                if (countdownValue_ > 1) {
+                    countdownValue_--;
+                    InvalidateRect(hwnd_, nullptr, TRUE);
+                }
+                else if (countdownValue_ == 1) {
+                    countdownValue_ = 0; // 倒數結束
+                    if (deckPos_ < deckOrder_.size()) {
+                        ShowNextItem();
+                        ScheduleNextTimer(); // 正式切換為 0.5~1.5秒 的隨機定時
+                    }
+                    else {
+                        ShowNoMatchFailureIfNeeded();
+                    }
+                }
+                // 常規隨機發牌定時
+                else {
+                    if (deckPos_ < deckOrder_.size()) {
+                        ShowNextItem();
+                        ScheduleNextTimer();
+                    }
+                    else {
+                        ShowNoMatchFailureIfNeeded();
+                    }
+                }
+            }
+            return 0;
+
+        case WM_HOTKEY:
+            if (wParam == HOTKEY_ID_SPACE) HandleSpacePressed();
+            else if (wParam == HOTKEY_ID_PLAYER_A) HandleDoublePlayerPressed(L'A');
+            else if (wParam == HOTKEY_ID_PLAYER_L) HandleDoublePlayerPressed(L'L');
+            return 0;
+
+        case WM_PAINT:
+            OnPaint();
+            return 0;
+
+        case WM_DESTROY:
+            KillTimer(hwnd_, TIMER_ID);
+            UnregisterHotKey(hwnd_, HOTKEY_ID_SPACE);
+            UnregisterHotKey(hwnd_, HOTKEY_ID_PLAYER_A);
+            UnregisterHotKey(hwnd_, HOTKEY_ID_PLAYER_L);
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcW(hwnd_, msg, wParam, lParam);
+    }
+
+public:
+    /**
+     * @brief 靜態 WindowProc，於 WM_NCCREATE 時將 this 指標與視窗關聯，其他情況呼叫內部 HandleMessage。
+     *
+     * @param hwnd 視窗句柄。
+     * @param msg 訊息代碼。
+     * @param wParam WPARAM。
+     * @param lParam LPARAM。
+     * @return LRESULT 若已處理請回傳相應值，否則回傳 DefWindowProcW。
+     */
+    static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        PokerWindowApp* pThis = nullptr;
+        if (msg == WM_NCCREATE) {
+            CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+            pThis = static_cast<PokerWindowApp*>(cs->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
+            pThis->hwnd_ = hwnd;
+        }
+        else {
+            pThis = reinterpret_cast<PokerWindowApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        }
+        if (pThis) return pThis->HandleMessage(msg, wParam, lParam);
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+};
+
+//=============================================================================
+// WinMain 入口函式
+//=============================================================================
+/**
+ * @brief 應用程式進入點（Unicode 版本）。
+ *
+ * @param hInstance 應用程式實例句柄。
+ * @param hPrevInstance 過去的實例（未使用）。
+ * @param intCmdShow 指定視窗顯示方式（傳遞給 Create 的 nCmdShow）。
+ * @param nShowCmd 未使用（保留）。
+ * @return int 程序結束代碼。
+ */
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR intCmdShow, int nShowCmd) {
+    PokerWindowApp app(hInstance);
+    if (!app.Create(nShowCmd)) return 0;
+    return app.Run();
+}
