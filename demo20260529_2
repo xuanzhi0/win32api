@@ -117,7 +117,7 @@ public:
         int innerCy = innerTop + innerH / 2;
         DrawTopLeftCorner(hdc, innerLeft, innerTop);
         DrawBottomRightCorner(hdc, left, top);
-        if (value_.value <= 10) {
+        if (value_.value >= 1 && value_.value <= 10) {
             DrawPips(hdc, value_.value, innerCx, innerCy);
         }
         else {
@@ -239,59 +239,61 @@ private:
         );
     }
 };
+
+
 //==================================================
 // 牌組類別：管理 52 張撲克牌
 //==================================================
-class Deck {
-private:
-    std::vector< Card> cards_;
-public:
-    Deck() {
-        Initialize();
-    }
-    void Draw(HDC hdc, int startX, int startY, int gapX, int gapY) const {
-        const int cardW = Card::GetWidth();
-        const int cardH = Card::GetHeight();
-        for (size_t i = 0; i < cards_.size(); ++i) {
-            int row = static_cast<int>(i / 13);
-            int col = static_cast<int>(i % 13);
-            int x = startX + col * (cardW + gapX);
-            int y = startY + row * (cardH + gapY);
-            cards_[i].Draw(hdc, x, y);
-        }
-    }
-private:
-    void Initialize() {
-        static const std::array<Suit, 4> suits = {
-            Suit{ L"♠", L"spade",   RGB(0, 0, 0) },
-            Suit{ L"♥", L"heart",   RGB(220, 0, 0) },
-            Suit{ L"♦", L"diamond", RGB(220, 0, 0) },
-            Suit{ L"♣", L"club",    RGB(0, 0, 0) }
-        };
-        static const std::array<CardValue, 13> values = {
-            CardValue{ L"A",  1  },
-            CardValue{ L"2",  2  },
-            CardValue{ L"3",  3  },
-            CardValue{ L"4",  4  },
-            CardValue{ L"5",  5  },
-            CardValue{ L"6",  6  },
-            CardValue{ L"7",  7  },
-            CardValue{ L"8",  8  },
-            CardValue{ L"9",  9  },
-            CardValue{ L"10", 10 },
-            CardValue{ L"J",  11 },
-            CardValue{ L"Q",  12 },
-            CardValue{ L"K",  13 }
-        };
-        cards_.clear();
-        cards_.reserve(52);
-        for (const auto& suit : suits) {
-            for (const auto& value : values) {
-                cards_.emplace_back(value, suit);
-            }
-        }
-    }
-};
+//class Deck {
+//private:
+//    std::vector< Card> cards_;
+//public:
+//    Deck() {
+//        Initialize();
+//    }
+//    void Draw(HDC hdc, int startX, int startY, int gapX, int gapY) const {
+//        const int cardW = Card::GetWidth();
+//        const int cardH = Card::GetHeight();
+//        for (size_t i = 0; i < cards_.size(); ++i) {
+//            int row = static_cast<int>(i / 13);
+//            int col = static_cast<int>(i % 13);
+//            int x = startX + col * (cardW + gapX);
+//            int y = startY + row * (cardH + gapY);
+//            cards_[i].Draw(hdc, x, y);
+//        }
+//    }
+//private:
+//    void Initialize() {
+//        static const std::array<Suit, 4> suits = {
+//            Suit{ L"♠", L"spade",   RGB(0, 0, 0) },
+//            Suit{ L"♥", L"heart",   RGB(220, 0, 0) },
+//            Suit{ L"♦", L"diamond", RGB(220, 0, 0) },
+//            Suit{ L"♣", L"club",    RGB(0, 0, 0) }
+//        };
+//        static const std::array<CardValue, 13> values = {
+//            CardValue{ L"A",  1  },
+//            CardValue{ L"2",  2  },
+//            CardValue{ L"3",  3  },
+//            CardValue{ L"4",  4  },
+//            CardValue{ L"5",  5  },
+//            CardValue{ L"6",  6  },
+//            CardValue{ L"7",  7  },
+//            CardValue{ L"8",  8  },
+//            CardValue{ L"9",  9  },
+//            CardValue{ L"10", 10 },
+//            CardValue{ L"J",  11 },
+//            CardValue{ L"Q",  12 },
+//            CardValue{ L"K",  13 }
+//        };
+//        cards_.clear();
+//        cards_.reserve(52);
+//        for (const auto& suit : suits) {
+//            for (const auto& value : values) {
+//                cards_.emplace_back(value, suit);
+//            }
+//        }
+//    }
+//};
 //==================================================
 // 主視窗 App 類別
 //==================================================
@@ -302,16 +304,16 @@ private:
 
     int currentSuitIndex_ = 0;
     int currentValueIndex_ = 0;
-
+    
     //右側目前正在顯示的序列索引
-    int currentShownSwqIndex_ = 0;
+    int currentShownSeqIndex_ = 0;
 
     //下一張要顯示的序列索引
     int nextSeqIndex_ = 0;
 
     bool running_ = false;
-    bool hasCurrentltem_ = false;
-
+    bool hasCurrentItem_ = false;
+    
     ULONGLONG shownTick_ = 0;
     std::mt19937 rng_;
 
@@ -323,9 +325,18 @@ private:
     bool anyMatchOccurred_ = false;
 
     static constexpr const wchar_t* CLASS_NAME = L"PokerCardWin32MenuReaction";
+	static constexpr UINT TIMER_ID = 1001;
+	static constexpr UINT ID_MENU_START = 40001;
+	static constexpr UINT ID_MENU_STOP = 40002;
+	static constexpr UINT ID_MENU_EXIT = 40003;
+    static constexpr int HOTKEY_ID_SPACE = 50001;
+    static constexpr UINT ID_SINGLE = 10001;
+	static constexpr UINT ID_DOUBLE = 10002;
+    static constexpr UINT ID_MULTIPLE = 10003;
+	static constexpr UINT ID_HELP_ABOUT = 10004;
 public:
     explicit PokerWindowApp(HINSTANCE hInstance)
-        : hInstance_(hInstance), hwnd_(nullptr) {
+        : hInstance_(hInstance), hwnd_(nullptr), rng_(std::random_device{}()) {
     }
     bool Create(int nCmdShow) {
         WNDCLASSW wc = {};
@@ -338,16 +349,17 @@ public:
         hwnd_ = CreateWindowExW(
             0,
             CLASS_NAME,
-            L"Win32 API 撲克牌繪圖（物件導向版）",
+            L"Win32 API 撲克牌反應測試",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT,
-            1800, 900,
+            1000, 700,
             nullptr,
             nullptr,
             hInstance_,
             this
         );
         if (!hwnd_) return false;
+        SetMenu(hwnd_, CreateAppMenu());
         ShowWindow(hwnd_, nCmdShow);
         UpdateWindow(hwnd_);
         return true;
@@ -358,26 +370,305 @@ public:
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        return static_cast<WPARAM>(msg.wParam);
+        return static_cast<int>(msg.wParam);
     }
 private:
+    HMENU CreateAppMenu() {
+        HMENU hMenuBar = CreateMenu();
+		HMENU hGameMenu = CreatePopupMenu();
+
+        AppendMenuW(hGameMenu, MF_STRING, ID_MENU_START, L"開始(&S)");
+        AppendMenuW(hGameMenu, MF_STRING, ID_MENU_STOP, L"停止(&T)");
+        AppendMenuW(hGameMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(hGameMenu, MF_STRING, ID_MENU_EXIT, L"結束");
+
+        AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hGameMenu, L"單人計時賽");
+		AppendMenuW(hMenuBar, MF_STRING, ID_DOUBLE, L"雙人計時賽");
+		AppendMenuW(hMenuBar, MF_STRING, ID_MULTIPLE, L"多人計時賽");
+		AppendMenuW(hMenuBar, MF_STRING, ID_HELP_ABOUT, L"說明");
+		return hMenuBar;
+    }
+
+    static const std::array<Suit, 4> GetSuits() {
+        static const std::array<Suit, 4> suits = {
+            Suit{ L"♠", L"spade",   RGB(0, 0, 0) },
+            Suit{ L"♥", L"heart",   RGB(220, 0, 0) },
+            Suit{ L"♦", L"diamond", RGB(220, 0, 0) },
+            Suit{ L"♣", L"club",    RGB(0, 0, 0) }
+        };
+		return suits;
+    }
+    static const std::array<CardValue, 13> GetCardValues() {
+        static const std::array<CardValue, 13> values = {
+           CardValue{ L"A",  1  },
+           CardValue{ L"2",  2  },
+           CardValue{ L"3",  3  },
+           CardValue{ L"4",  4  },
+           CardValue{ L"5",  5  },
+           CardValue{ L"6",  6  },
+           CardValue{ L"7",  7  },
+           CardValue{ L"8",  8  },
+           CardValue{ L"9",  9  },
+           CardValue{ L"10", 10 },
+           CardValue{ L"J",  11 },
+           CardValue{ L"Q",  12 },
+           CardValue{ L"K",  13 }
+        };
+        return values;
+    }
+
+    static const std::array<const wchar_t*, 13> & GetSequenceLabels() {
+        static const std::array<const wchar_t*, 13> seq = {
+            L"1",
+            L"2",
+            L"3",
+            L"4",
+            L"5",
+            L"6",
+            L"7",
+            L"8",
+            L"9",
+            L"10",
+            L"J",
+            L"Q",
+            L"K"
+        };
+		return seq;
+    }
+
+    int RandomlntervalMs() {
+        std::uniform_int_distribution<int> dist(100, 1000);
+		return dist(rng_);
+    }
+
+    void BuildShuffledDeck() {
+        deckOrder_.clear();
+        deckOrder_.reserve(52);
+        for (int i = 0; i < 52; ++i) {
+            deckOrder_.push_back(i);
+        }
+        std::shuffle(deckOrder_.begin(), deckOrder_.end(), rng_);
+		deckPos_ = 0;
+    }
+
+    bool IsCardAndTextMatched() const {
+        const auto& values = GetCardValues();
+		const auto& seq = GetSequenceLabels();
+
+		std::wstring cardText = values[currentValueIndex_].label;
+		std::wstring shownText = seq[currentShownSeqIndex_];
+
+        //A視為1
+        if (cardText == L"A" && shownText == L"1") {
+            return true;
+        }
+		return cardText == shownText;
+    }
+
+    void StartSequence() {
+        StopSequence();
+
+        running_ = true;
+		hasCurrentItem_ = false;
+        nextSeqIndex_ = 0;
+		currentShownSeqIndex_ = 0;
+        anyMatchOccurred_ = false;
+        
+        BuildShuffledDeck();
+
+        if(!RegisterHotKey(hwnd_, HOTKEY_ID_SPACE, 0, VK_SPACE)) {
+            MessageBoxW(hwnd_, L"無法註冊空白鍵HotKey", L"錯誤", MB_OK | MB_ICONERROR);
+		}
+        ShowNextItem();
+        ScheduleNextTimer();
+
+		InvalidateRect(hwnd_, nullptr, TRUE);
+	}
+
+    void StopSequence() {
+		KillTimer(hwnd_, TIMER_ID);
+		UnregisterHotKey(hwnd_, HOTKEY_ID_SPACE);
+		running_ = false;
+    }
+
+    void ScheduleNextTimer() {
+        KillTimer(hwnd_, TIMER_ID); 
+        SetTimer(hwnd_, TIMER_ID, RandomlntervalMs(), nullptr);
+    }
+    //顯示下一張洗牌後的牌
+    bool ShowNextItem() {
+        if (deckPos_ >= deckOrder_.size()) {
+            return false;
+        }
+
+        int cardId = deckOrder_[deckPos_]++;
+        currentSuitIndex_ = cardId / 13; // 0~3
+        currentValueIndex_ = cardId % 13; // 0~12
+
+        currentShownSeqIndex_ = nextSeqIndex_;
+        nextSeqIndex_ = (nextSeqIndex_ + 1) % 13;
+
+        shownTick_ = GetTickCount64();
+        hasCurrentItem_ = true;
+
+        if (IsCardAndTextMatched()) {
+            anyMatchOccurred_ = true;
+        }
+
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return true;
+    }
+
+    void ShowNoMatchFailureNeeded() {
+        MessageBoxW(
+			hwnd_,
+            L"52張牌全部顯示完畢,沒有任何一次與右側數字//JQK相符。結果:失敗",
+            L"失敗",
+            MB_OK | MB_ICONINFORMATION);
+    }
+
+    void HandleSpacePressed() {
+        if (!running_ || !hasCurrentItem_)return;
+        
+		ULONGLONG now = GetTickCount64();
+		ULONGLONG elapsed = now - shownTick_;
+
+        bool correct = IsCardAndTextMatched();
+        
+		StopSequence();
+
+        const auto& seq = GetSequenceLabels();
+        const auto& values = GetCardValues();
+
+		std::wstring shownText = seq[currentShownSeqIndex_];
+		std::wstring cardText = values[currentValueIndex_].label;
+        
+        std::wstringstream ss;
+        ss  << L"撲克牌: " << cardText << L" "
+			<< L"右邊數字: " << shownText << L" "
+			<< L"反應時間: " << elapsed << L" 毫秒";
+        
+        MessageBoxW(
+            hwnd_,
+			ss.str().c_str(),
+			correct ? L"答對" : L"失敗",
+            MB_OK |(correct? MB_ICONINFORMATION:MB_ICONWARNING)
+		);
+    }
+
     void OnPaint() {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd_, &ps);
+        
         RECT rc;
         GetClientRect(hwnd_, &rc);
+
         HBRUSH bg = CreateSolidBrush(RGB(255, 255, 255));
         FillRect(hdc, &rc, bg);
         DeleteObject(bg);
-        deck_.Draw(hdc, 20, 20, 10, 20);
+
+        if (hasCurrentItem_) {
+			const auto& suits = GetSuits();
+			const auto& values = GetCardValues();
+			const auto& seq = GetSequenceLabels();
+
+			Card card(values[currentValueIndex_], suits[currentSuitIndex_]);
+
+			int cardW = Card::GetWidth();
+			int cardH = Card::GetHeight();
+
+			int centerX = (rc.left + rc.right) / 2;
+			int centerY = (rc.top + rc.bottom) / 2+20;
+
+			int cardLeft = centerX - cardW / 2;
+			int cardTop = centerY - cardH / 2;
+
+            //中央撲克牌
+			card.Draw(hdc, cardLeft, cardTop);
+
+            //右邊數字/JQK
+            TextRenderer::Draw(
+                hdc,
+                cardLeft + cardW + 100,
+                centerY + 20,
+                seq[currentShownSeqIndex_],
+                64,
+                RGB(0, 90, 180),
+                TA_CENTER | TA_BASELINE,
+                0,
+                L"Segoe UI",
+                FW_BOLD
+			);
+            
+            //左下角可顯示進度
+            std::wstringstream ss;
+			ss << L"第 " << deckPos_ << L" /52 張牌";
+            TextRenderer::Draw(
+                hdc,
+                30,
+                rc.bottom - 30,
+                ss.str(),
+                18,
+                RGB(80, 80, 80),
+                TA_LEFT | TA_BASELINE,
+                0,
+                L"Microsoft JhengHei UI",
+                FW_NORMAL
+			);
+        }
         EndPaint(hwnd_, &ps);
     }
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         switch (msg) {
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+            case ID_MENU_START:
+                StartSequence();
+                return 0;
+            case ID_MENU_STOP:
+                StopSequence();
+                return 0;
+            case ID_MENU_EXIT:
+                DestroyWindow(hwnd_);
+                return 0;
+            case ID_HELP_ABOUT:
+                MessageBoxW(
+                    hwnd_,
+                    L"玩法:1.按開始。2.52張撲克牌先洗好再依序顯示。3.若牌面與右側數字/JQK相符,請按空白鍵。4.若52張牌全部都沒有符合則顯示失敗",
+                    L"說明",
+                    MB_OK | MB_ICONINFORMATION
+                );
+                return 0;
+            }
+            break;
+
+		case WM_TIMER:
+            if (wParam == TIMER_ID && running_) {
+                //如果還有下一張，顯示下一張
+                if (deckPos_ < deckOrder_.size()) {
+					ShowNextItem();
+					ScheduleNextTimer();
+                }
+                else {
+					//最後一張已經顯示過並時間已到，檢查是否52張都沒有任何符合
+					ShowNoMatchFailureNeeded();
+                }
+            }
+            return 0;
+
+        case WM_HOTKEY:
+            if (wParam == HOTKEY_ID_SPACE) {
+                HandleSpacePressed();
+                return 0;
+            }
+            break;
+		
         case WM_PAINT:
             OnPaint();
             return 0;
         case WM_DESTROY:
+			KillTimer(hwnd_, TIMER_ID);
+			UnregisterHotKey(hwnd_, HOTKEY_ID_SPACE);
             PostQuitMessage(0);
             return 0;
         }
