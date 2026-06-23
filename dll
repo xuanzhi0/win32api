@@ -1,0 +1,77 @@
+#include <windows.h>
+
+//=============================================================================
+// 撲克牌自動辨識核心類別
+//=============================================================================
+class PokerRecognizer {
+private:
+    HWND hwndTarget_;
+
+public:
+    explicit PokerRecognizer(HWND hwnd) : hwndTarget_(hwnd) {}
+
+    void Execute() {
+        // 1. 取得即時視窗大小，動態計算老師畫布上的精準座標
+        RECT rc;
+        GetClientRect(hwndTarget_, &rc);
+
+        int cardW = 120;
+        int cardH = 180;
+        int centerX = (rc.left + rc.right) / 2;
+        int centerY = (rc.top + rc.bottom) / 2 + 20;
+
+        // 計算撲克牌左上角與中心點
+        int cardLeft = centerX - cardW / 2;
+        int cardTop = centerY - cardH / 2;
+        int innerCx = cardLeft + 60;
+        int innerCy = cardTop + 90;
+
+        // 計算右側藍色目標文字的中心點 (X 軸往右移 220 像素)
+        int targetTextX = cardLeft + 220;
+        int targetTextY = centerY + 20;
+
+        // 2. 透過 HWND 取得畫布 DC
+        HDC hdc = GetDC(hwndTarget_);
+        if (!hdc) return;
+
+        // 3. 【抓取關鍵特徵點像素】
+        // 抓取右側目標字的顏色 (老師程式用的是 RGB(0, 90, 180))
+        COLORREF targetColor = GetPixel(hdc, targetTextX, targetTextY);
+
+        // 抓取撲克牌正中央的顏色
+        COLORREF cardCenterColor = GetPixel(hdc, innerCx, innerCy);
+
+        // 4. 【執行你的辨識邏輯】
+        bool isMatch = false;
+
+        // 這裡寫你的演算法，例如：
+        // if (經過座標與顏色比對，確定目前的牌面 == 右側文字) {
+        //     isMatch = true;
+        // }
+
+        // 5. 【關鍵合併：如果 Match，直接在 DLL 內發送 HotKey 訊息】
+        if (isMatch) {
+            // 50001 就是老師程式碼裡的 HOTKEY_ID_SPACE
+            SendMessageW(hwndTarget_, WM_HOTKEY, 50001, 0);
+        }
+
+        // 6. ⚠️ 釋放 DC 資源（極度重要，否則程式跑久了會崩潰）
+        ReleaseDC(hwndTarget_, hdc);
+    }
+};
+
+//=============================================================================
+// 老師程式會呼叫的 DLL 導出接口
+//=============================================================================
+extern "C" __declspec(dllexport) void CALLBACK check(HWND hwnd) {
+    if (!hwnd) return;
+
+    // 直接實例化辨識器並執行
+    PokerRecognizer recognizer(hwnd);
+    recognizer.Execute();
+}
+
+// DLL 入口點
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
+    return TRUE;
+}
