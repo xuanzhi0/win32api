@@ -1,77 +1,132 @@
 #include <windows.h>
+#include <process.h>
+#include <vector>
+
+// 定義簡單的點座標結構
+struct CardPoint {
+    int dx; // 相對於卡片中心的 X 偏移
+    int dy; // 相對於卡片中心的 Y 偏移
+};
+
+// 全局多執行緒控制變數
+static HWND g_hwndTarget = NULL;       
+static HANDLE g_hEventSignal = NULL;   
+static HANDLE g_hThreadGuard = NULL;   
+static bool g_bIsRunning = true;       
 
 //=============================================================================
-// 撲克牌自動辨識核心類別
+// 常駐背景守護執行緒 (Worker Thread)
 //=============================================================================
-class PokerRecognizer {
-private:
-    HWND hwndTarget_;
+unsigned __stdcall DedicatedMonitorThread(void* pParam) {
+    // 先定義好 1 ~ 10 點的相對座標分佈 (以卡片中心為 0,0)
+    // 根據你提供的數學模型轉換為精確像素位移：
+    const int left = -32, cen = 0, right = 32;
+    const int top = -55, mid = 0, bottom = 55;
+    const int v31 = -27, v32 = 27;
+    const int v41 = -18, v42 = 18;
+    const int v51 = -36, v52 = 36;
 
-public:
-    explicit PokerRecognizer(HWND hwnd) : hwndTarget_(hwnd) {}
+    std::vector<CardPoint> positions[11]; // 索引 1~10 對應點數 1~10
+    positions[1] = { {cen, mid} };
+    positions[2] = { {cen, top}, {cen, bottom} };
+    positions[3] = { {cen, top}, {cen, mid}, {cen, bottom} };
+    positions[4] = { {left, top}, {right, top}, {left, bottom}, {right, bottom} };
+    positions[5] = { {left, top}, {right, top}, {cen, mid}, {left, bottom}, {right, bottom} };
+    positions[6] = { {left, top}, {right, top}, {left, mid}, {right, mid}, {left, bottom}, {right, bottom} };
+    positions[7] = { {left, top}, {right, top}, {cen, v31}, {left, mid}, {right, mid}, {left, bottom}, {right, bottom} };
+    positions[8] = { {left, top}, {right, top}, {cen, v31}, {left, mid}, {right, mid}, {cen, v32}, {left, bottom}, {right, bottom} };
+    positions[9] = { {left, top}, {right, top}, {cen, v51}, {left, v41}, {right, v41}, {left, v42}, {right, v42}, {left, bottom}, {right, bottom} };
+    positions[10] = { {left, top}, {right, top}, {cen, v51}, {left, v41}, {right, v41}, {left, v42}, {right, v42}, {cen, v52}, {left, bottom}, {right, bottom} };
 
-    void Execute() {
-        // 1. 取得即時視窗大小，動態計算老師畫布上的精準座標
+    while (g_bIsRunning) {
+        // 1. 等待發牌訊號
+        WaitForSingleObject(g_hEventSignal, INFINITE);
+        if (!g_bIsRunning) break;
+
+        // 2. 延遲 5 毫秒，保證主程式 OnPaint 畫完
+        Sleep(5);
+
+        HWND hwnd = g_hwndTarget;
+        if (!hwnd || !IsWindow(hwnd)) continue;
+
+        // 3. 計算畫布幾何中心
         RECT rc;
-        GetClientRect(hwndTarget_, &rc);
-
-        int cardW = 120;
-        int cardH = 180;
+        GetClientRect(hwnd, &rc);
         int centerX = (rc.left + rc.right) / 2;
         int centerY = (rc.top + rc.bottom) / 2 + 20;
 
-        // 計算撲克牌左上角與中心點
-        int cardLeft = centerX - cardW / 2;
-        int cardTop = centerY - cardH / 2;
-        int innerCx = cardLeft + 60;
-        int innerCy = cardTop + 90;
+        // 卡片正中心座標
+        int innerCx = centerX; 
+        int innerCy = centerY; 
 
-        // 計算右側藍色目標文字的中心點 (X 軸往右移 220 像素)
-        int targetTextX = cardLeft + 220;
+        // 右側藍色目標文字的偵測點坐标
+        int targetTextX = centerX - 60 + 220;
         int targetTextY = centerY + 20;
 
-        // 2. 透過 HWND 取得畫布 DC
-        HDC hdc = GetDC(hwndTarget_);
-        if (!hdc) return;
+        HDC hdc = GetDC(hwnd);
+        if (hdc) {
+            // 4. 抓取右側目標字的顏色 (判斷題目是否要求搶答)
+            COLORREF targetColor = GetPixel(hdc, targetTextX, targetTextY);
+            
+            // 假設我們要找的目標牌是數字 8 (這裡可以根據你未來解析目標字改為動態)
+            int targetCardNumber = 8; 
 
-        // 3. 【抓取關鍵特徵點像素】
-        // 抓取右側目標字的顏色 (老師程式用的是 RGB(0, 90, 180))
-        COLORREF targetColor = GetPixel(hdc, targetTextX, targetTextY);
+            if (targetColor == RGB(0, 90, 180)) { // 確定出題了（藍色字）
+                
+                bool isCurrentCardMatch = true;
 
-        // 抓取撲克牌正中央的顏色
-        COLORREF cardCenterColor = GetPixel(hdc, innerCx, innerCy);
+                // 5. 遍歷目標點數的所有特徵點
+                for (const auto& pt : positions[targetCardNumber]) {
+                    // 計算螢幕上的絕對座標
+                    int absX = innerCx + pt.dx;
+                    int absY = innerCy + pt.dy;
 
-        // 4. 【執行你的辨識邏輯】
-        bool isMatch = false;
+                    COLORREF pixelColor = GetPixel(hdc, absX, absY);
 
-        // 這裡寫你的演算法，例如：
-        // if (經過座標與顏色比對，確定目前的牌面 == 右側文字) {
-        //     isMatch = true;
-        // }
+                    // 如果該有花色的地方竟然是「純白色」(RGB 255,255,255)，代表點數不對！
+                    if (pixelColor == RGB(255, 255, 255)) {
+                        isCurrentCardMatch = false;
+                        break; // 只要有一點不符，直接出局
+                    }
+                }
 
-        // 5. 【關鍵合併：如果 Match，直接在 DLL 內發送 HotKey 訊息】
-        if (isMatch) {
-            // 50001 就是老師程式碼裡的 HOTKEY_ID_SPACE
-            SendMessageW(hwndTarget_, WM_HOTKEY, 50001, 0);
+                // 6. 如果全數通過，代表目前的牌就是我們要的數字！
+                if (isCurrentCardMatch) {
+                    PostMessageW(hwnd, WM_HOTKEY, 50001, 0); // 異步發送空白鍵
+                }
+            }
+            ReleaseDC(hwnd, hdc);
         }
-
-        // 6. ⚠️ 釋放 DC 資源（極度重要，否則程式跑久了會崩潰）
-        ReleaseDC(hwndTarget_, hdc);
     }
-};
-
-//=============================================================================
-// 老師程式會呼叫的 DLL 導出接口
-//=============================================================================
-extern "C" __declspec(dllexport) void CALLBACK check(HWND hwnd) {
-    if (!hwnd) return;
-
-    // 直接實例化辨識器並執行
-    PokerRecognizer recognizer(hwnd);
-    recognizer.Execute();
+    return 0;
 }
 
-// DLL 入口點
+//=============================================================================
+// 老師程式呼叫的 DLL 導出接口
+//=============================================================================
+extern "C" __declspec(dllexport) void check(HWND hwnd) {
+    if (!hwnd) return;
+    g_hwndTarget = hwnd;
+    SetEvent(g_hEventSignal); // 喚醒後台
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
+    switch (ul_reason_for_call) {
+    case DLL_PROCESS_ATTACH:
+        g_hEventSignal = CreateEventW(NULL, FALSE, FALSE, NULL);
+        g_hThreadGuard = (HANDLE)_beginthreadex(NULL, 0, DedicatedMonitorThread, NULL, 0, NULL);
+        break;
+    case DLL_PROCESS_DETACH:
+        g_bIsRunning = false;
+        if (g_hEventSignal) {
+            SetEvent(g_hEventSignal);
+            CloseHandle(g_hEventSignal);
+        }
+        if (g_hThreadGuard) {
+            WaitForSingleObject(g_hThreadGuard, 2000);
+            CloseHandle(g_hThreadGuard);
+        }
+        break;
+    }
     return TRUE;
 }
